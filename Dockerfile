@@ -1,25 +1,16 @@
+FROM golang:1.27-alpine AS build
+WORKDIR /src
+COPY go.mod ./
+COPY main.go index.html ./
+COPY assets/icons/ ./assets/icons/
+RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /out/render-landing .
+
 FROM caddy:2-alpine
-
-ARG FILES_ORIGIN=https://files.razzie.cloud
-ARG AUTH_ORIGIN=https://auth.razzie.cloud
-ARG NOTES_ORIGIN=https://notes.razzie.cloud
-
+COPY --from=build /out/render-landing /usr/local/bin/render-landing
 COPY Caddyfile /etc/caddy/Caddyfile
-COPY index.html /etc/landing/index.html
 COPY landing.css /srv/
 COPY assets/ /srv/assets/
 COPY docker-entrypoint.sh /usr/local/bin/landing-entrypoint
-
-# Keep one page source; local builds link to the local services and shared port.
-RUN sed -i \
-      -e "s|https://files.razzie.cloud|${FILES_ORIGIN}|g" \
-      -e "s|https://auth.razzie.cloud|${AUTH_ORIGIN}|g" \
-      -e "s|https://notes.razzie.cloud|${NOTES_ORIGIN}|g" \
-      -e "s|<small>notes.razzie.cloud</small>|<small>${NOTES_ORIGIN#*://}</small>|g" \
-      -e "s|<small>files.razzie.cloud</small>|<small>${FILES_ORIGIN#*://}</small>|g" \
-      -e "s|<small>auth.razzie.cloud</small>|<small>${AUTH_ORIGIN#*://}</small>|g" \
-      /etc/landing/index.html
-
 ENTRYPOINT ["sh", "/usr/local/bin/landing-entrypoint"]
 CMD ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
 EXPOSE 8080

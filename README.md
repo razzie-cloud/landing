@@ -1,104 +1,69 @@
-# Razzie Cloud landing page
+# Razzie Cloud landing
 
-A brief static homepage designed for `https://razzie.cloud/`. It introduces the
-project and links directly to:
+Independent source for `ghcr.io/razzie-cloud/landing`, included as the parent
+checkout's `landing/` Git submodule. Caddy serves local assets and a page rendered
+at startup by a small Go program. No browser JavaScript or database is needed.
+The design follows the browser's light/dark preference.
 
-- GitHub: <https://github.com/razzie-cloud>
-- Files: <https://files.razzie.cloud/>
-- Access Gateway: <https://auth.razzie.cloud/>
+## Configuration
 
-The page uses vendored PicoCSS, the new cloud mascot, and a small layout stylesheet.
-All assets are local. It follows the browser's light/dark preference and works
-without JavaScript, a build process, a backend, or third-party requests.
-The links use ordinary navigation; no dynamic HTMX behavior is needed here.
+| Environment | Flag | Default |
+| --- | --- | --- |
+| `DOMAIN` | `--domain` | `razzie.cloud` |
+| `SCHEME` | `--scheme` | `https` |
+| `PUBLIC_PORT` | `--public-port` | no explicit port |
+| `APPS_CONFIG_FILE` | `--apps-config` | no extra apps |
 
-## Local review
+`DOMAIN` is a hostname without a scheme, port or path. It drives the canonical
+URL, Open Graph metadata and built-in Sign in links at `auth.<DOMAIN>`.
+Sign in always appears in navigation and as a card; it cannot be removed by config.
+Flags override environment variables. Container Caddy listens on port 8080.
+Restart after changing settings or config; no image rebuild is needed.
 
-From this directory:
+Copy [apps.example.json](apps.example.json) to your own config to list Files and
+Notes. Each app needs `name`, exactly one of `subdomain` or absolute HTTP(S)
+`url`, and optionally `description` and `icon`. Subdomains use the configured
+domain, scheme and public port. External URLs keep their own scheme and port.
+Apps appear in config order in both navigation and cards. All config text is
+HTML-escaped. Invalid config, URLs and icon names fail startup.
 
-```sh
-python3 -m http.server 8766 --bind 127.0.0.1
-```
-
-Visit <http://127.0.0.1:8766/>. Browser/devtools color-scheme emulation can switch
-the theme. The service and GitHub links point to their real destinations.
-
-Screenshots: [light desktop](previews/desktop-light.png),
-[dark desktop](previews/desktop-dark.png), [light mobile](previews/mobile-light.png),
-[dark mobile](previews/mobile-dark.png).
-
-## Local stack
-
-The parent Compose stack builds this directory as the `landing` service and
-serves it through Caddy at <http://localhost:8080>. Files and sign-in links are
-rewritten at build time to `files.localhost`, `notes.localhost`, and `auth.localhost`, including the
-shared `LOCAL_PORT`. GitHub links keep their public destination.
-
-From the parent checkout, after setting the usual local `.env` passwords:
+Bundled icons: `app` (default), `files`, `notes`, `calendar`, `photos`, `music`,
+`video`, `code`, `chat`, `globe`, `chart`, `settings`, `shield`.
+See [assets/icons](assets/icons) to preview the SVGs. App definitions cannot
+inject SVG or load remote icons. The cloud logo is the unchanged brand master;
+the vendored PicoCSS license remains alongside its asset.
 
 ```sh
-docker compose up --build -d
+docker build -t landing:local .
+docker run --rm -p 127.0.0.1:8766:8080 \
+  -e DOMAIN=example.com -e APPS_CONFIG_FILE=/etc/landing/apps.json \
+  --mount type=bind,src="$PWD/apps.example.json",dst=/etc/landing/apps.json,readonly \
+  landing:local
 ```
 
-After page, logo, or `LOCAL_PORT` changes, rebuild with
-`docker compose up --build -d landing caddy`. A standalone Python preview uses
-the source HTML's production service links instead.
+The parent Compose stack uses `DOMAIN=localhost`, `SCHEME=http` and its shared
+`LOCAL_PORT`. Swarm uses its `DOMAIN` and a Docker config containing Files/Notes.
+Deployment files belong to the separate infra repository.
 
-## Swarm image
-
-Swarm routes `https://razzie.cloud` publicly to `landing:8080`. It uses a published
-image rather than a checkout bind mount, so tasks can run on any node. The image
-serves only `index.html`, `landing.css`, and `assets/`; its HTML template and startup
-script stay outside the web root. Previews and repository documentation are
-excluded. The Pico license remains with the served assets.
-
-Build and publish from the infra checkout using a new tag for each page update:
+## Local preview and checks
 
 ```sh
-landing_tag=your-release-tag
-docker build -t "ghcr.io/razzie-cloud/landing:$landing_tag" landing
-docker push "ghcr.io/razzie-cloud/landing:$landing_tag"
+go build ./...
+go vet ./...
+go test -race ./...
+mkdir -p dist
+cp -R assets landing.css dist/
+go run . --apps-config apps.example.json --output dist/index.html
+python3 -m http.server 8766 --bind 127.0.0.1 --directory dist
 ```
 
-Set `LANDING_IMAGE_TAG` in infra's ignored `.env` to that tag, run `make config`,
-then use the normal `make deploy` workflow when ready. The registry image must
-be pullable by the Swarm nodes. For a private package, log in to GHCR locally;
-the deployment script forwards that login to Swarm. `make latest-tags` selects only the four Go
-services and preserves your landing tag. Point the apex DNS record at the Caddy
-ingress host; the existing proxy handles HTTPS. No gateway allowlist entry or
-database is needed for the homepage.
+Use `--domain localhost --scheme http --public-port 8080` for local app links.
+Only `dist/` belongs in the preview web root. `index.html` in source is a Go
+HTML template, so render it before previewing.
 
-Set `DOMAIN=example.com` in infra's `.env` to use another domain. The stack passes
-it to the container, which renders Files/auth links, their display hostnames, and
-canonical/Open Graph URLs at startup. The default is `razzie.cloud`; the same image
-works for any domain without rebuilding. Publish an image containing this startup
-script before using this setting with an older deployment.
-The Dockerfile's `FILES_ORIGIN` and `AUTH_ORIGIN` build arguments remain available
-for the local Compose stack's HTTP origins and shared port.
+## Releases
 
-`assets/razzie-cloud-logo.png` is an exact copy of the parent brand master;
-the Pico license is retained beside the vendored CSS.
-
-## Verification
-
-Headless Chromium checked both color schemes at widths of 320, 390, 768, 1024,
-1440, and 1920 pixels, with no page overflow or browser errors. Desktop and mobile
-screenshots were captured from the actual HTML. Checks covered successful local
-asset loads, a single primary heading, the expected external destinations (GitHub, Files, Notes, sign-in),
-keyboard skip navigation, and content/service links with JavaScript disabled.
-Rendering makes no requests to third-party origins. Destination links were
-verified in the document without signing in or contacting live services.
-
-Local asset references, logo-copy hashes, and Git whitespace checks also passed.
-Stack integration checks passed for both Compose configurations (including a
-custom local port), Make's environment export, both image builds, Caddy config
-validation, and HTTP requests through the actual local proxy. Checks verified
-service links, asset content types and logo hashes, container health, and 404s
-for previews, repository files, and missing paths. Test containers and their
-network were removed afterward.
-
-The installed Docker CLI lacks `docker stack config`; the Swarm file was checked
-with `docker compose config` instead. No Swarm deployment or public DNS/TLS
-acceptance ran, and no image was pushed. No Go service code changed.
-
-The image also accepts `NOTES_ORIGIN` at build time for local Notes links.
+Tag pushes publish a container to GHCR via GitHub Actions. Publish a new image
+before selecting its `LANDING_IMAGE_TAG` in infra. The extracted release tags
+preserve the historical Files-only page and the later addition of Notes.
+Historical screenshots under `previews/` are retained as design references.
