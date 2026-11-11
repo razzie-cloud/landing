@@ -1,8 +1,10 @@
 # Razzie Cloud landing
 
 Independent source for `ghcr.io/razzie-cloud/landing`, included as the parent
-checkout's `landing/` Git submodule. Caddy serves local assets and a page rendered
-at startup by a small Go program. No browser JavaScript or database is needed.
+checkout's `landing/` Git submodule. A standalone Go HTTP server embeds the page,
+styles and assets in its binary. It reads config and renders the homepage once
+at startup, then serves the result from memory. No browser JavaScript or database
+is needed.
 The design follows the browser's light/dark preference.
 
 ## Configuration
@@ -13,11 +15,15 @@ The design follows the browser's light/dark preference.
 | `SCHEME` | `--scheme` | `https` |
 | `PUBLIC_PORT` | `--public-port` | no explicit port |
 | `APPS_CONFIG_FILE` | `--apps-config` | no extra apps |
+| `SERVICE_PORT` | `--port` | `8080` |
+| `LOG_LEVEL` | — | `INFO` |
 
 `DOMAIN` is a hostname without a scheme, port or path. It drives the canonical
 URL, Open Graph metadata and built-in Sign in links at `auth.<DOMAIN>`.
 Sign in always appears in navigation and as a card; it cannot be removed by config.
-Flags override environment variables. Container Caddy listens on port 8080.
+Flags override environment variables. `SERVICE_PORT` controls the HTTP listener;
+`PUBLIC_PORT` only controls generated public URLs. TLS belongs to the ingress
+proxy. `LOG_LEVEL` accepts DEBUG, INFO, WARN or ERROR; logs are JSON on stderr.
 Restart after changing settings or config; no image rebuild is needed.
 
 Copy [apps.example.json](apps.example.json) to your own config to list Files and
@@ -51,15 +57,16 @@ Deployment files belong to the separate infra repository.
 go build ./...
 go vet ./...
 go test -race ./...
-mkdir -p dist
-cp -R assets landing.css dist/
-go run . --apps-config apps.example.json --output dist/index.html
-python3 -m http.server 8766 --bind 127.0.0.1 --directory dist
+go run . --port 8766 --apps-config apps.example.json
 ```
 
 Use `--domain localhost --scheme http --public-port 8080` for local app links.
-Only `dist/` belongs in the preview web root. `index.html` in source is a Go
-HTML template, so render it before previewing.
+Open <http://localhost:8766/> to preview. The page, `/landing.css` and `/assets/*`
+accept GET/HEAD requests. Other paths and directory listings return 404; source
+and config files are never served. GET/HEAD `/healthz` and `/readyz` return 200
+after startup succeeds. Invalid config prevents the server from listening.
+SIGINT/SIGTERM drain active HTTP requests with a ten-second shutdown deadline.
+The container runs as an unprivileged user and needs no writable web directory.
 
 ## Releases
 

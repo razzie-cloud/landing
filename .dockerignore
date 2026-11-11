@@ -1,6 +1,4 @@
 *
-!Caddyfile
-!docker-entrypoint.sh
 !index.html
 !landing.css
 !assets/

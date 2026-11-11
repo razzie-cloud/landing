@@ -1,11 +1,87 @@
 package main
 
 import (
+	"bytes"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestHTTPService(t *testing.T) {
+	p, err := loadPage("localhost", "http", "9191", "apps.example.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, err := newHandler(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/", "/index.html", "/landing.css", "/assets/pico.min.css", "/assets/razzie-cloud-logo.png", "/assets/icons/notes.svg", "/assets/PICO-LICENSE.md", "/healthz", "/readyz"} {
+		t.Run(path, func(t *testing.T) {
+			get := httptest.NewRecorder()
+			handler.ServeHTTP(get, httptest.NewRequest(http.MethodGet, path, nil))
+			if get.Code != http.StatusOK || get.Body.Len() == 0 {
+				t.Fatalf("GET %s: %d %s", path, get.Code, get.Body.String())
+			}
+			if get.Header().Get("X-Content-Type-Options") != "nosniff" || get.Header().Get("Content-Security-Policy") == "" {
+				t.Fatal("missing response protection")
+			}
+			head := httptest.NewRecorder()
+			handler.ServeHTTP(head, httptest.NewRequest(http.MethodHead, path, nil))
+			if head.Code != http.StatusOK || head.Body.Len() != 0 || head.Header().Get("Content-Type") != get.Header().Get("Content-Type") {
+				t.Fatalf("HEAD %s: %d %s", path, head.Code, head.Body.String())
+			}
+			if path == "/" || path == "/index.html" {
+				if !strings.Contains(get.Header().Get("Content-Type"), "text/html") || !strings.Contains(get.Body.String(), `href="http://notes.localhost:9191/"`) || strings.Contains(get.Body.String(), "{{") {
+					t.Fatal("homepage was not rendered with startup configuration")
+				}
+			}
+			post := httptest.NewRecorder()
+			handler.ServeHTTP(post, httptest.NewRequest(http.MethodPost, path, nil))
+			if post.Code != http.StatusMethodNotAllowed {
+				t.Fatalf("POST %s: %d", path, post.Code)
+			}
+		})
+	}
+	for _, path := range []string{"/missing", "/assets/", "/assets/icons/", "/assets/missing.svg", "/main.go", "/README.md", "/apps.example.json", "/etc/landing/apps.json", "/assets/%2e%2e/index.html"} {
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("private or missing path %s: %d", path, w.Code)
+		}
+	}
+	// Embedded files retain normal HTTP types and byte-range support.
+	r := httptest.NewRequest(http.MethodGet, "/assets/razzie-cloud-logo.png", nil)
+	r.Header.Set("Range", "bytes=0-7")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+	if w.Code != http.StatusPartialContent || w.Header().Get("Content-Type") != "image/png" || !bytes.Equal(w.Body.Bytes(), []byte("\x89PNG\r\n\x1a\n")) {
+		t.Fatalf("image range: %d %v", w.Code, w.Header())
+	}
+}
+
+func TestHTTPServiceKeepsStartupConfiguration(t *testing.T) {
+	file := configFile(t, `{"apps":[{"name":"Startup app","subdomain":"app"}]}`)
+	p, err := loadPage("example.com", "https", "", file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, err := newHandler(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, []byte("invalid after startup"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "Startup app") {
+		t.Fatal("requests should use the configuration rendered at startup")
+	}
+}
 
 func configFile(t *testing.T, text string) string {
 	t.Helper()
