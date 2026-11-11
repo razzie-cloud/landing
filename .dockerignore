@@ -5,3 +5,5 @@
 !landing.css
 !assets/
 !assets/**
+!go.mod
+!main.go
